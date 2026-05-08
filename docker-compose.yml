@@ -1,21 +1,28 @@
-version: '3.8'
+# Docker Compose configuration for the Docker Registry WebUI
+# Usage: IMAGE_TAG=v1.0.0 docker compose up -d
 
 services:
+  # Main application service
   cr-web-ringen:
     container_name: cr-web-ringen
-    image: cr-web-ringen-p8080
+    # Image name and optional version tag (defaults to 'latest')
+    image: cr-web-ringen-p8080:${IMAGE_TAG:-latest}
     build:
       context: .
       dockerfile: docker/Dockerfile
+    # Map container port 8080 to host port 8080
     ports:
       - "8080:8080"
+    # Environment variables for registry connection
     environment:
       - REGISTRY_URL=http://host.docker.internal:5000
       - REGISTRY_USER=admin
       - REGISTRY_PASSWORD=password
       - CONFIG_DIR=/app/config
+    # Allow the container to resolve host.docker.internal
     extra_hosts:
       - "host.docker.internal:host-gateway"
+    # Persist registry settings across container recreations
     volumes:
       - ./config:/app/config
     networks:

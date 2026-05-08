@@ -114,20 +114,52 @@ async def get_tags(name: str, client: httpx.AsyncClient = Depends(get_registry_c
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+ACCEPT_HEADERS = (
+    "application/vnd.oci.image.index.v1+json, "
+    "application/vnd.oci.image.manifest.v1+json, "
+    "application/vnd.docker.distribution.manifest.v2+json"
+)
+
+
+async def _resolve_manifest(client, name, tag):
+    manifest_response = await client.get(
+        f"/v2/{name}/manifests/{tag}",
+        headers={"Accept": ACCEPT_HEADERS}
+    )
+    manifest_response.raise_for_status()
+    data = manifest_response.json()
+
+    media_type = data.get("mediaType", "")
+
+    if media_type == "application/vnd.oci.image.index.v1+json":
+        manifests = data.get("manifests", [])
+        target = None
+        for m in manifests:
+            p = m.get("platform", {})
+            if p.get("architecture") == "amd64" and p.get("os") == "linux":
+                target = m
+                break
+        if target is None:
+            target = manifests[0]
+        digest = target["digest"]
+        platform = f"{target['platform']['os']}/{target['platform']['architecture']}"
+        print(f"OCI index - resolving to {platform} ({digest})")
+        resp2 = await client.get(
+            f"/v2/{name}/manifests/{digest}",
+            headers={"Accept": ACCEPT_HEADERS}
+        )
+        resp2.raise_for_status()
+        return resp2.json(), resp2.headers
+    elif media_type in ("application/vnd.oci.image.manifest.v1+json", "application/vnd.docker.distribution.manifest.v2+json"):
+        return data, manifest_response.headers
+    else:
+        raise HTTPException(status_code=415, detail=f"Unsupported mediaType: {media_type}")
+
+
 @app.get("/api/tag-details")
 async def get_tag_details(name: str, tag: str, client: httpx.AsyncClient = Depends(get_registry_client)):
     try:
-        manifest_response = await client.get(
-            f"/v2/{name}/manifests/{tag}",
-            headers={
-                "Accept": (
-                    "application/vnd.oci.image.manifest.v1+json, "
-                    "application/vnd.docker.distribution.manifest.v2+json"
-                )
-            }
-        )
-        manifest_response.raise_for_status()
-        manifest = manifest_response.json()
+        manifest, _headers = await _resolve_manifest(client, name, tag)
 
         size_bytes = 0
         for layer in manifest.get("layers", []):
@@ -162,6 +194,39 @@ async def get_tag_details(name: str, tag: str, client: httpx.AsyncClient = Depen
             "size_bytes": size_bytes if size_bytes > 0 else None,
             "size_human": format_size(size_bytes) if size_bytes > 0 else "Unknown",
         }
+    except httpx.HTTPStatusError as e:
+        raise HTTPException(status_code=e.response.status_code, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/manifest-digest")
+async def get_manifest_digest(name: str, tag: str, client: httpx.AsyncClient = Depends(get_registry_client)):
+    try:
+        manifest, headers = await _resolve_manifest(client, name, tag)
+        digest = headers.get("docker-content-digest")
+        if not digest:
+            raise HTTPException(status_code=500, detail="Registry did not return manifest digest")
+        return {"digest": digest}
+    except httpx.HTTPStatusError as e:
+        raise HTTPException(status_code=e.response.status_code, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/delete-tag")
+async def delete_tag(request: Request, client: httpx.AsyncClient = Depends(get_registry_client)):
+    data = await request.json()
+    name = data.get("name")
+    digest = data.get("digest")
+    if not name or not digest:
+        raise HTTPException(status_code=400, detail="name and digest are required")
+    try:
+        response = await client.delete(f"/v2/{name}/manifests/{digest}")
+        if response.status_code == 202:
+            return {"status": "success", "message": f"Tag deleted from {name}"}
+        elif response.status_code == 404:
+            raise HTTPException(status_code=404, detail="Manifest not found. It may have already been deleted.")
+        else:
+            raise HTTPException(status_code=response.status_code, detail=response.text)
     except httpx.HTTPStatusError as e:
         raise HTTPException(status_code=e.response.status_code, detail=str(e))
     except Exception as e:

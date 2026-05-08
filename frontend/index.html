@@ -28,6 +28,8 @@
         button { padding: 10px 15px; background-color: #007bff; color: white; border: none; border-radius: 4px; cursor: pointer; }
         button:hover { background-color: #0056b3; }
         .back-btn { margin-bottom: 20px; background-color: #6c757d; }
+        .delete-btn { background-color: #dc3545; padding: 6px 10px; }
+        .delete-btn:hover { background-color: #bb2d3b; }
         .error { color: red; margin-bottom: 10px; }
     </style>
 </head>
@@ -151,11 +153,21 @@
                 } else {
                     tags.forEach((tag, idx) => {
                         const imageRef = `${registryHost}/${repoName}:${tag}`;
-                        html += `<div class="card tag-card" data-tag="${encodeURIComponent(tag)}">${tag}</div>`;
+                        html += `<div class="card tag-card" data-tag="${encodeURIComponent(tag)}">${tag}<button class="delete-btn" data-repo="${escapeHtml(repoName)}" data-tag="${escapeHtml(tag)}" style="float:right;">Delete</button></div>`;
                         html += `<div class="command-block"><code id="tag-ref-${idx}" class="command-line">${escapeHtml(imageRef)}</code><button class="copy-btn" data-cmd-id="tag-ref-${idx}">Copy</button></div>`;
                     });
                 }
                 app.innerHTML = html;
+
+                const deleteButtons = app.querySelectorAll('.delete-btn');
+                deleteButtons.forEach(btn => {
+                    btn.addEventListener('click', (e) => {
+                        e.stopPropagation();
+                        const repo = btn.dataset.repo;
+                        const tag = btn.dataset.tag;
+                        deleteTag(repo, tag);
+                    });
+                });
 
                 const tagCards = app.querySelectorAll('.tag-card');
                 tagCards.forEach(card => {
@@ -258,6 +270,75 @@
                 showCatalog();
             } catch (err) {
                 alert('Error saving settings: ' + err.message);
+            }
+        }
+
+        async function deleteTag(repoName, tag) {
+            const confirmMsg = `Are you sure you want to delete the tag '${tag}' from '${repoName}'? This action cannot be undone.`;
+            if (!confirm(confirmMsg)) {
+                return;
+            }
+            try {
+                const digestResp = await fetch(`/api/manifest-digest?name=${encodeURIComponent(repoName)}&tag=${encodeURIComponent(tag)}`);
+                if (!digestResp.ok) {
+                    const errData = await digestResp.json();
+                    throw new Error(errData.detail || 'Failed to get manifest digest');
+                }
+                const digestData = await digestResp.json();
+                const deleteResp = await fetch('/api/delete-tag', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ name: repoName, digest: digestData.digest })
+                });
+                if (!deleteResp.ok) {
+                    const errData = await deleteResp.json();
+                    throw new Error(errData.detail || 'Failed to delete tag');
+                }
+                alert(`Tag '${tag}' deleted successfully.`);
+                await refreshTags(repoName);
+            } catch (err) {
+                alert('Error deleting tag: ' + err.message);
+            }
+        }
+
+        async function refreshTags(repoName) {
+            try {
+                const data = await fetchApi(`/api/tags/${repoName}`);
+                const tags = data.tags || [];
+                const registryHost = await getRegistryHost();
+
+                let html = `<div class="header"><h1>Tags for ${repoName}</h1><span class="settings-icon" onclick="showSettings()">⚙️</span></div><button class="back-btn" onclick="showCatalog()">Back to Catalog</button><div id="tag-detail" class="tag-detail">Click a tag to see date and file size.</div>`;
+                if (tags.length === 0) {
+                    html += '<p>No tags found.</p>';
+                } else {
+                    tags.forEach((tag, idx) => {
+                        const imageRef = `${registryHost}/${repoName}:${tag}`;
+                        html += `<div class="card tag-card" data-tag="${encodeURIComponent(tag)}">${tag}<button class="delete-btn" data-repo="${escapeHtml(repoName)}" data-tag="${escapeHtml(tag)}" style="float:right;">Delete</button></div>`;
+                        html += `<div class="command-block"><code id="tag-ref-${idx}" class="command-line">${escapeHtml(imageRef)}</code><button class="copy-btn" data-cmd-id="tag-ref-${idx}">Copy</button></div>`;
+                    });
+                }
+                app.innerHTML = html;
+
+                const tagCards = app.querySelectorAll('.tag-card');
+                tagCards.forEach(card => {
+                    card.addEventListener('click', () => {
+                        const selectedTag = decodeURIComponent(card.dataset.tag || '');
+                        showTagDetails(repoName, selectedTag);
+                    });
+                });
+
+                const deleteButtons = app.querySelectorAll('.delete-btn');
+                deleteButtons.forEach(btn => {
+                    btn.addEventListener('click', (e) => {
+                        e.stopPropagation();
+                        const repo = btn.dataset.repo;
+                        const tag = btn.dataset.tag;
+                        deleteTag(repo, tag);
+                    });
+                });
+                attachCopyHandlers(app);
+            } catch (err) {
+                app.innerHTML = `<div class="header"><h1>Tags for ${repoName}</h1><span class="settings-icon" onclick="showSettings()">⚙️</span></div><div class="error">Error refreshing: ${err.message}</div><button class="back-btn" onclick="showCatalog()">Back to Catalog</button>`;
             }
         }
 
