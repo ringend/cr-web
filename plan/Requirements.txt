@@ -1,0 +1,7 @@
+Create a webui for a Docker Registry that I am self hosting.  The following are the requirements:
+- webui runs as docker container on port 8080.
+- http based.  
+- The ui display the catalog as a clickable list.
+- clicking on a catalog shows the tags in the catalog.
+- The url, userid and password for the container registry can be set in the setting.
+- Written in python and javascript.

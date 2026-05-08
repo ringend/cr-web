@@ -1,0 +1,29 @@
+version: '3.8'
+
+services:
+  cr-web-ringen:
+    container_name: cr-web-ringen
+    image: cr-web-ringen-p8080
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    ports:
+      - "8080:8080"
+    environment:
+      - REGISTRY_URL=http://host.docker.internal:5000
+      - REGISTRY_USER=admin
+      - REGISTRY_PASSWORD=password
+      - CONFIG_DIR=/app/config
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - ./config:/app/config
+    networks:
+      - default
+
+networks:
+  default:
+    enable_ipv6: true
+    ipam:
+      config:
+        - subnet: "fd00:dead:beef:1::/64"
